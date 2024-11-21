@@ -2,6 +2,15 @@ getVarMD <- function(filepath) {
     doc <- xmlTreeParse(filepath, useInternalNodes = T)
     namespaces <- namespaces(doc)
 
+    # Add "def" namespace if not present
+    if (!"def" %in% names(namespaces)) {
+        namespaces["def"] <- "http://www.cdisc.org/ns/def/v2.0"
+    }
+
+    # Print namespaces to verify they're correct
+    print("Namespaces:")
+    print(namespaces)
+
     # ItemRef
     ItemGroupDef <- getNodeSet(doc, "//ns:ItemGroupDef", namespaces)
     DSName <- getDSName(ItemGroupDef)
@@ -61,6 +70,89 @@ getVarMD <- function(filepath) {
 
     Variable.Metadata <- Variable.Metadata[so, ]
     row.names(Variable.Metadata) <- NULL
+
+    # Add where clause conditions for variables with ValueListDefs
+    valueListDefs <- getNodeSet(doc, "//def:ValueListDef", namespaces)
+    
+    # Debug print
+    print(paste("Number of ValueListDefs found:", length(valueListDefs)))
+    
+    if (length(valueListDefs) > 0) {
+        print("Found ValueListDefs, processing them...")
+        
+        # Initialize a new column for where conditions
+        Variable.Metadata$Where_Conditions <- NA_character_
+        
+        for (vld in valueListDefs) {
+            var_oid <- xmlGetAttr(vld, "OID")
+            print(paste("Processing ValueListDef with OID:", var_oid))
+            
+            dataset_var <- strsplit(var_oid, "\\.")[[1]]
+            if (length(dataset_var) >= 3) {
+                dataset <- dataset_var[2]
+                var_name <- dataset_var[3]
+                print(paste("Dataset:", dataset, "Variable:", var_name))
+                
+                # Get all ItemRefs within this ValueListDef
+                itemRefs <- getNodeSet(vld, ".//ns:ItemRef", namespaces)
+                print(paste("Number of ItemRefs found:", length(itemRefs)))
+                
+                for (itemRef in itemRefs) {
+                    # Get WhereClauseRef
+                    whereClauseRef <- getNodeSet(itemRef, ".//def:WhereClauseRef", namespaces)
+                    print(paste("Number of WhereClauseRefs found:", length(whereClauseRef)))
+                    
+                    if (length(whereClauseRef) > 0) {
+                        whereClauseOID <- xmlGetAttr(whereClauseRef[[1]], "WhereClauseOID")
+                        print(paste("Processing WhereClauseOID:", whereClauseOID))
+                        
+                        # Get the actual WhereClauseDef
+                        whereClauseDef <- getNodeSet(
+                            doc, 
+                            sprintf("//def:WhereClauseDef[@OID='%s']", whereClauseOID),
+                            namespaces
+                        )
+                        
+                        if (length(whereClauseDef) > 0) {
+                            print("Found matching WhereClauseDef")
+                            # Extract RangeCheck information
+                            rangeChecks <- getNodeSet(whereClauseDef[[1]], ".//ns:RangeCheck", namespaces)
+                            conditions <- sapply(rangeChecks, function(rc) {
+                                comparator <- xmlGetAttr(rc, "Comparator")
+                                checkValues <- getNodeSet(rc, ".//ns:CheckValue", namespaces)
+                                values <- sapply(checkValues, xmlValue)
+                                paste(comparator, paste(values, collapse = ", "))
+                            })
+                            
+                            # Find the matching row in Variable.Metadata
+                            row_idx <- which(Variable.Metadata$IGD_Name == dataset & 
+                                           Variable.Metadata$ID_Name == var_name)
+                            
+                            print(paste("Matching rows found:", length(row_idx)))
+                            
+                            if (length(row_idx) > 0) {
+                                current_condition <- Variable.Metadata$Where_Conditions[row_idx]
+                                new_condition <- paste(conditions, collapse = "; ")
+                                
+                                print(paste("Adding condition:", new_condition))
+                                
+                                # Append new condition or create if NA
+                                if (is.na(current_condition)) {
+                                    Variable.Metadata$Where_Conditions[row_idx] <- new_condition
+                                } else {
+                                    Variable.Metadata$Where_Conditions[row_idx] <- paste(
+                                        current_condition, new_condition, sep = "\n"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        print("No ValueListDefs found in the document")
+    }
 
     # Add derivation descriptions for derived variables
     if (any(Variable.Metadata$ID_OriginType == "Derived")) {
