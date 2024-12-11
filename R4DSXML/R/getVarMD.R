@@ -102,5 +102,92 @@ getVarMD <- function(filepath) {
         }
     }
 
+    # Add Where Conditions
+    whereClauseDefs <- getNodeSet(doc, "//ns:def:WhereClauseDef", namespaces)
+    valueListDefs <- getNodeSet(doc, "//ns:def:ValueListDef", namespaces)
+    
+    # Create mapping of WhereClauseDef OIDs to their conditions
+    where_conditions <- lapply(whereClauseDefs, function(node) {
+        oid <- xmlGetAttr(node, "OID")
+        rangeCheck <- xmlChildren(node)[[1]]
+        comparator <- xmlGetAttr(rangeCheck, "Comparator")
+        # Convert comparator to symbol
+        comp_symbol <- switch(comparator,
+            "EQ" = "=",
+            "NE" = "!=",
+            "IN" = "IN",
+            "NOTIN" = "NOTIN",
+            comparator
+        )
+        checkValue <- xmlValue(xmlChildren(rangeCheck)[[1]])
+        itemOID <- xmlGetAttr(rangeCheck, "def:ItemOID")
+        
+        # Get variable name from ItemOID (removing "IT." prefix)
+        varName <- sub("IT\\.[^.]+\\.", "", itemOID)
+        
+        # Construct condition string
+        condition <- sprintf("%s %s '%s' (%s)", 
+                           varName, comp_symbol, checkValue, checkValue)
+        
+        return(c(oid = oid, condition = condition))
+    })
+    where_map <- do.call(rbind, where_conditions)
+    
+    # Process ValueListDefs to create additional rows
+    additional_rows <- list()
+    
+    for (vld in valueListDefs) {
+        parentOID <- xmlGetAttr(vld, "OID")
+        # Extract dataset and variable name from OID (e.g., "VL.LB.LBSPID" -> "LB", "LBSPID")
+        parts <- strsplit(parentOID, "\\.")[[1]]
+        if (length(parts) >= 3) {
+            dataset <- parts[2]
+            varname <- parts[3]
+            
+            # Find parent row in Variable.Metadata
+            parent_idx <- which(Variable.Metadata$IGD_Name == dataset & 
+                              Variable.Metadata$ID_Name == varname)
+            
+            if (length(parent_idx) > 0) {
+                parent_row <- Variable.Metadata[parent_idx[1], ]
+                
+                # Process each ItemRef with WhereClauseRef
+                itemRefs <- xmlChildren(vld)
+                for (itemRef in itemRefs) {
+                    whereClauseRef <- xmlChildren(itemRef)[[1]]
+                    if (xmlName(whereClauseRef) == "def:WhereClauseRef") {
+                        whereClauseOID <- xmlGetAttr(whereClauseRef, "WhereClauseOID")
+                        
+                        # Find matching condition
+                        condition_idx <- which(where_map[, "oid"] == whereClauseOID)
+                        if (length(condition_idx) > 0) {
+                            # Create new row inheriting from parent
+                            new_row <- parent_row
+                            new_row$Where_Condition <- where_map[condition_idx, "condition"]
+                            additional_rows[[length(additional_rows) + 1]] <- new_row
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    # Add Where_Condition column to original Variable.Metadata
+    Variable.Metadata$Where_Condition <- NA
+    
+    # Combine original and additional rows
+    if (length(additional_rows) > 0) {
+        additional_df <- do.call(rbind, additional_rows)
+        Variable.Metadata <- rbind(Variable.Metadata, additional_df)
+    }
+    
+    # Sort the final dataset
+    so <- order(Variable.Metadata$IGD_Name, 
+                Variable.Metadata$IR_OrderNumber,
+                !is.na(Variable.Metadata$Where_Condition))
+    
+    Variable.Metadata <- Variable.Metadata[so, ]
+    row.names(Variable.Metadata) <- NULL
+    
     return(Variable.Metadata)
 }
