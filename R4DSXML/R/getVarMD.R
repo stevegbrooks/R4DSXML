@@ -103,14 +103,17 @@ getVarMD <- function(filepath) {
     }
 
     # Add Where Conditions
-    whereClauseDefs <- getNodeSet(doc, "//ns:def:WhereClauseDef", namespaces)
-    valueListDefs <- getNodeSet(doc, "//ns:def:ValueListDef", namespaces)
+    whereClauseDefs <- getNodeSet(doc, "//def:WhereClauseDef", 
+                                 c(def = "http://www.cdisc.org/ns/def/v2.0"))
+    valueListDefs <- getNodeSet(doc, "//def:ValueListDef", 
+                               c(def = "http://www.cdisc.org/ns/def/v2.0"))
     
     # Create mapping of WhereClauseDef OIDs to their conditions
     where_conditions <- lapply(whereClauseDefs, function(node) {
         oid <- xmlGetAttr(node, "OID")
         rangeCheck <- xmlChildren(node)[[1]]
         comparator <- xmlGetAttr(rangeCheck, "Comparator")
+        
         # Convert comparator to symbol
         comp_symbol <- switch(comparator,
             "EQ" = "=",
@@ -119,8 +122,9 @@ getVarMD <- function(filepath) {
             "NOTIN" = "NOTIN",
             comparator
         )
+        
         checkValue <- xmlValue(xmlChildren(rangeCheck)[[1]])
-        itemOID <- xmlGetAttr(rangeCheck, "def:ItemOID")
+        itemOID <- xmlGetAttr(rangeCheck, "ItemOID")
         
         # Get variable name from ItemOID (removing "IT." prefix)
         varName <- sub("IT\\.[^.]+\\.", "", itemOID)
@@ -131,41 +135,41 @@ getVarMD <- function(filepath) {
         
         return(c(oid = oid, condition = condition))
     })
-    where_map <- do.call(rbind, where_conditions)
+    
+    if (length(where_conditions) > 0) {
+        where_map <- do.call(rbind, where_conditions)
+    } else {
+        where_map <- matrix(character(0), ncol = 2)
+        colnames(where_map) <- c("oid", "condition")
+    }
     
     # Process ValueListDefs to create additional rows
     additional_rows <- list()
     
     for (vld in valueListDefs) {
         parentOID <- xmlGetAttr(vld, "OID")
-        # Extract dataset and variable name from OID (e.g., "VL.LB.LBSPID" -> "LB", "LBSPID")
         parts <- strsplit(parentOID, "\\.")[[1]]
         if (length(parts) >= 3) {
             dataset <- parts[2]
             varname <- parts[3]
             
-            # Find parent row in Variable.Metadata
             parent_idx <- which(Variable.Metadata$IGD_Name == dataset & 
                               Variable.Metadata$ID_Name == varname)
             
             if (length(parent_idx) > 0) {
                 parent_row <- Variable.Metadata[parent_idx[1], ]
                 
-                # Process each ItemRef with WhereClauseRef
-                itemRefs <- xmlChildren(vld)
-                for (itemRef in itemRefs) {
-                    whereClauseRef <- xmlChildren(itemRef)[[1]]
-                    if (xmlName(whereClauseRef) == "def:WhereClauseRef") {
-                        whereClauseOID <- xmlGetAttr(whereClauseRef, "WhereClauseOID")
-                        
-                        # Find matching condition
-                        condition_idx <- which(where_map[, "oid"] == whereClauseOID)
-                        if (length(condition_idx) > 0) {
-                            # Create new row inheriting from parent
-                            new_row <- parent_row
-                            new_row$Where_Condition <- where_map[condition_idx, "condition"]
-                            additional_rows[[length(additional_rows) + 1]] <- new_row
-                        }
+                # Get all ItemRef nodes directly
+                itemRefs <- getNodeSet(vld, ".//def:WhereClauseRef", 
+                                     c(def = "http://www.cdisc.org/ns/def/v2.0"))
+                
+                for (whereClauseRef in itemRefs) {
+                    whereClauseOID <- xmlGetAttr(whereClauseRef, "WhereClauseOID")
+                    condition_idx <- which(where_map[, "oid"] == whereClauseOID)
+                    if (length(condition_idx) > 0) {
+                        new_row <- parent_row
+                        new_row$Where_Condition <- where_map[condition_idx, "condition"]
+                        additional_rows[[length(additional_rows) + 1]] <- new_row
                     }
                 }
             }
