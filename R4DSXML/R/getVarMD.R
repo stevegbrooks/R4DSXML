@@ -94,39 +94,14 @@ getVarMD <- function(filepath) {
 
     # Create Controlled_Terms column
     Variable.Metadata$Controlled_Terms <- NA_character_
+    Variable.Metadata$Display_Value <- NA_character_
+    Variable.Metadata$Permitted_Value <- NA_character_  # Add Permitted_Value column
 
-    # Add derivation descriptions for derived variables
-    if (any(Variable.Metadata$ID_OriginType == "Derived")) {
-        # Cache common lookups at the start
-        methodDefs <- getNodeSet(doc, "//odm:MethodDef|//MethodDef", 
-                               c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
-        if (length(methodDefs) > 0) {
-            method_map <- do.call(rbind, lapply(methodDefs, function(node) {
-                oid <- xmlGetAttr(node, "OID")
-                translated_text <- getNodeSet(node, ".//odm:TranslatedText|.//TranslatedText",
-                                           c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
-                desc <- if (length(translated_text) > 0) {
-                    trimws(xmlValue(translated_text[[1]]))
-                } else {
-                    NA_character_
-                }
-                data.frame(
-                    MethodOID = oid,
-                    Description = desc,
-                    stringsAsFactors = FALSE
-                )
-            }))
-        } else {
-            method_map <- data.frame(
-                MethodOID = character(0),
-                Description = character(0),
-                stringsAsFactors = FALSE
-            )
-        }
-
-        commentDefs <- getNodeSet(doc, "//def:CommentDef", 
-                                c(def = "http://www.cdisc.org/ns/def/v2.0"))
-        comment_map <- do.call(rbind, lapply(commentDefs, function(node) {
+    # Cache method and comment definitions
+    methodDefs <- getNodeSet(doc, "//odm:MethodDef|//MethodDef", 
+                           c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+    if (length(methodDefs) > 0) {
+        method_map <- do.call(rbind, lapply(methodDefs, function(node) {
             oid <- xmlGetAttr(node, "OID")
             translated_text <- getNodeSet(node, ".//odm:TranslatedText|.//TranslatedText",
                                        c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
@@ -136,31 +111,36 @@ getVarMD <- function(filepath) {
                 NA_character_
             }
             data.frame(
-                CommentOID = oid,
+                MethodOID = oid,
                 Description = desc,
                 stringsAsFactors = FALSE
             )
         }))
-
-        # For derived variables, get their descriptions
-        derived_vars <- Variable.Metadata$ID_OriginType == "Derived"
-
-        # Process each dataset separately
-        for (dataset in unique(Variable.Metadata$IGD_Name)) {
-            dataset_vars <- Variable.Metadata$IGD_Name == dataset & derived_vars
-            if (any(dataset_vars)) {
-                constructed_oids <- paste0("MT.", dataset, ".", Variable.Metadata$ID_Name[dataset_vars])
-                matched_descriptions <- method_map$Description[match(constructed_oids, method_map$MethodOID)]
-                
-                # Only assign if we found matching descriptions
-                valid_matches <- !is.na(matched_descriptions)
-                if (any(valid_matches)) {
-                    idx <- which(dataset_vars)[valid_matches]
-                    Variable.Metadata$ID_OriginDescription[idx] <- matched_descriptions[valid_matches]
-                }
-            }
-        }
+    } else {
+        method_map <- data.frame(
+            MethodOID = character(0),
+            Description = character(0),
+            stringsAsFactors = FALSE
+        )
     }
+
+    commentDefs <- getNodeSet(doc, "//def:CommentDef", 
+                            c(def = "http://www.cdisc.org/ns/def/v2.0"))
+    comment_map <- do.call(rbind, lapply(commentDefs, function(node) {
+        oid <- xmlGetAttr(node, "OID")
+        translated_text <- getNodeSet(node, ".//odm:TranslatedText|.//TranslatedText",
+                                   c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+        desc <- if (length(translated_text) > 0) {
+            trimws(xmlValue(translated_text[[1]]))
+        } else {
+            NA_character_
+        }
+        data.frame(
+            CommentOID = oid,
+            Description = desc,
+            stringsAsFactors = FALSE
+        )
+    }))
 
     # Add Where Conditions
     whereClauseDefs <- getNodeSet(doc, "//def:WhereClauseDef", 
@@ -333,6 +313,169 @@ getVarMD <- function(filepath) {
     
     Variable.Metadata <- Variable.Metadata[so, ]
     row.names(Variable.Metadata) <- NULL
+
+    # Now process QNAM/QLABEL pairs after all other processing is done
+    # Cache QNAM and QLABEL CodeLists for faster lookup
+    qnam_qlab_map <- list()
+    for (codeList in codeLists) {
+        oid <- xmlGetAttr(codeList, "OID")
+        # Process both QNAM and QLAB codelists
+        if (grepl("\\$[^.]+\\.QNA[ML]", oid)) {
+            items <- getNodeSet(codeList, ".//odm:CodeListItem|.//CodeListItem", 
+                              c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+            
+            # Store values and decodes separately
+            values <- character()
+            decodes <- character()
+            
+            for (item in items) {
+                value <- xmlGetAttr(item, "CodedValue")
+                decode_node <- getNodeSet(item, ".//odm:TranslatedText|.//TranslatedText",
+                                        c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+                decode <- if (length(decode_node) > 0) xmlValue(decode_node[[1]]) else value
+                
+                values <- c(values, value)
+                decodes <- c(decodes, decode)
+            }
+            
+            if (length(values) > 0) {
+                qnam_qlab_map[[oid]] <- list(values = values, decodes = decodes)
+            }
+        }
+    }
+
+    # Process QNAM/QLABEL pairs for each dataset
+    final_rows <- list()
+    
+    for (dataset in unique(Variable.Metadata$IGD_Name)) {
+        if (grepl("^SUPP", dataset)) {
+            # Find QNAM and QLABEL rows for this dataset
+            qnam_idx <- which(Variable.Metadata$IGD_Name == dataset & 
+                            Variable.Metadata$ID_Name == "QNAM")
+            qlab_idx <- which(Variable.Metadata$IGD_Name == dataset & 
+                            Variable.Metadata$ID_Name == "QLABEL")
+            
+            if (length(qnam_idx) > 0 && length(qlab_idx) > 0) {
+                # Get the CodeListRefs for both QNAM and QLABEL
+                qnam_itemdef <- getNodeSet(doc, 
+                    sprintf("//odm:ItemDef[@OID='IT.%s.QNAM']|//ItemDef[@OID='IT.%s.QNAM']", 
+                            dataset, dataset),
+                    c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+                qlab_itemdef <- getNodeSet(doc, 
+                    sprintf("//odm:ItemDef[@OID='IT.%s.QLABEL']|//ItemDef[@OID='IT.%s.QLABEL']", 
+                            dataset, dataset),
+                    c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+                
+                if (length(qnam_itemdef) > 0 && length(qlab_itemdef) > 0) {
+                    qnam_codelistref <- getNodeSet(qnam_itemdef[[1]], 
+                        ".//odm:CodeListRef|.//CodeListRef|.//def:CodeListRef",
+                        c(odm = "http://www.cdisc.org/ns/odm/v1.3",
+                          def = "http://www.cdisc.org/ns/def/v2.0"))
+                    qlab_codelistref <- getNodeSet(qlab_itemdef[[1]], 
+                        ".//odm:CodeListRef|.//CodeListRef|.//def:CodeListRef",
+                        c(odm = "http://www.cdisc.org/ns/odm/v1.3",
+                          def = "http://www.cdisc.org/ns/def/v2.0"))
+                    
+                    if (length(qnam_codelistref) > 0 && length(qlab_codelistref) > 0) {
+                        qnam_oid <- xmlGetAttr(qnam_codelistref[[1]], "CodeListOID")
+                        qlab_oid <- xmlGetAttr(qlab_codelistref[[1]], "CodeListOID")
+                        
+                        if (!is.null(qnam_oid) && !is.null(qlab_oid) &&
+                            qnam_oid %in% names(qnam_qlab_map)) {
+                            
+                            qnam_values <- qnam_qlab_map[[qnam_oid]]
+                            
+                            # Find QVAL rows with Where_Conditions for this dataset
+                            qval_rows <- which(Variable.Metadata$IGD_Name == dataset & 
+                                             Variable.Metadata$ID_Name == "QVAL" &
+                                             !is.na(Variable.Metadata$Where_Condition))
+                            
+                            if (length(qval_rows) > 0) {
+                                # Extract QNAM values from Where_Conditions
+                                qnam_values_from_where <- sapply(strsplit(Variable.Metadata$Where_Condition[qval_rows], "'"), 
+                                                               function(x) x[2])
+                                
+                                # For each QVAL row with a Where_Condition
+                                for (i in seq_along(qval_rows)) {
+                                    qnam_value <- qnam_values_from_where[i]
+                                    # Find the index in the QNAM values list
+                                    value_idx <- which(qnam_values$values == qnam_value)
+                                    
+                                    if (length(value_idx) > 0) {
+                                        # Create a new row based on the QVAL row
+                                        new_row <- Variable.Metadata[qval_rows[i], ]
+                                        
+                                        # Set all columns to NA except IGD_Name
+                                        for (col in names(Variable.Metadata)) {
+                                            if (!col %in% c("IGD_Name")) {
+                                                new_row[[col]] <- NA
+                                            }
+                                        }
+                                        
+                                        # Set the Display_Value to the corresponding QLABEL value
+                                        new_row$Display_Value <- qnam_values$decodes[value_idx]
+                                        # Set the Permitted_Value to the corresponding QNAM value
+                                        new_row$Permitted_Value <- qnam_values$values[value_idx]
+                                        # Set ID_Name to indicate this is a QNAM/QLABEL value list row
+                                        new_row$ID_Name <- "QNAM/QLABEL Value List"
+                                        
+                                        # Add to final_rows
+                                        final_rows[[length(final_rows) + 1]] <- new_row
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    # Add the final rows to Variable.Metadata
+    if (length(final_rows) > 0) {
+        # Ensure all columns match
+        final_df <- do.call(rbind, lapply(final_rows, function(row) {
+            # Make sure row has all columns from Variable.Metadata
+            missing_cols <- setdiff(names(Variable.Metadata), names(row))
+            if (length(missing_cols) > 0) {
+                for (col in missing_cols) {
+                    row[[col]] <- NA
+                }
+            }
+            # Ensure column order matches
+            row[names(Variable.Metadata)]
+        }))
+        
+        # Find QLABEL rows for each dataset
+        datasets <- unique(final_df$IGD_Name)
+        new_variable_metadata <- list()
+        
+        # Process each dataset separately
+        for (dataset in datasets) {
+            # Get rows for this dataset
+            dataset_rows <- Variable.Metadata[Variable.Metadata$IGD_Name == dataset, ]
+            dataset_final_rows <- final_df[final_df$IGD_Name == dataset, ]
+            
+            # Find QLABEL row index - take the first one if there are multiple
+            qlab_idx <- which(dataset_rows$ID_Name == "QLABEL")[1]
+            
+            if (!is.null(qlab_idx) && length(qlab_idx) > 0) {
+                # Split the dataset rows at QLABEL
+                before_qlabel <- dataset_rows[seq_len(qlab_idx), ]
+                after_qlabel <- dataset_rows[seq(qlab_idx + 1, nrow(dataset_rows)), ]
+                
+                # Combine parts with final rows in the middle
+                dataset_rows <- rbind(before_qlabel, dataset_final_rows, after_qlabel)
+            }
+            
+            new_variable_metadata[[dataset]] <- dataset_rows
+        }
+        
+        # Combine all datasets back together
+        Variable.Metadata <- do.call(rbind, new_variable_metadata)
+        # Reset row names to be sequential
+        rownames(Variable.Metadata) <- NULL
+    }
     
     return(Variable.Metadata)
 }
