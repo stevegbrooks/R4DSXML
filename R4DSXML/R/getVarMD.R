@@ -6,6 +6,36 @@ getVarMD <- function(filepath) {
     ItemGroupDef <- getNodeSet(doc, "//ns:ItemGroupDef", namespaces)
     DSName <- getDSName(ItemGroupDef)
 
+    # Cache CodeLists for faster lookup
+    codeLists <- getNodeSet(doc, "//odm:CodeList|//CodeList", 
+                           c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+    codeList_map <- list()
+    for (codeList in codeLists) {
+        oid <- xmlGetAttr(codeList, "OID")
+        name <- xmlGetAttr(codeList, "Name")
+        
+        # Get both CodeListItem and EnumeratedItem nodes
+        items <- getNodeSet(codeList, ".//odm:CodeListItem|.//CodeListItem|.//odm:EnumeratedItem|.//EnumeratedItem", 
+                          c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+        
+        terms <- sapply(items, function(item) {
+            value <- xmlGetAttr(item, "CodedValue")
+            # For CodeListItem, get decode from TranslatedText, for EnumeratedItem just use the CodedValue
+            if (xmlName(item) == "CodeListItem") {
+                decode_node <- getNodeSet(item, ".//odm:TranslatedText|.//TranslatedText",
+                                        c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+                decode <- if (length(decode_node) > 0) xmlValue(decode_node[[1]]) else value
+                sprintf('"%s" = "%s"', value, decode)
+            } else {
+                # For EnumeratedItem, just use the CodedValue
+                value
+            }
+        })
+        
+        codeList_map[[oid]] <- sprintf("%s\n%s",
+                                     name,
+                                     paste(terms, collapse = "\n"))
+    }
 
     for (i in DSName) {
         ItemRefNode <- getNodeSet(
@@ -61,6 +91,9 @@ getVarMD <- function(filepath) {
 
     Variable.Metadata <- Variable.Metadata[so, ]
     row.names(Variable.Metadata) <- NULL
+
+    # Create Controlled_Terms column
+    Variable.Metadata$Controlled_Terms <- NA_character_
 
     # Add derivation descriptions for derived variables
     if (any(Variable.Metadata$ID_OriginType == "Derived")) {
@@ -180,35 +213,63 @@ getVarMD <- function(filepath) {
             dataset <- parts[2]
             varname <- parts[3]
             
+            # Find the parent row in Variable.Metadata
             parent_idx <- which(Variable.Metadata$IGD_Name == dataset & 
                               Variable.Metadata$ID_Name == varname)
             
             if (length(parent_idx) > 0) {
                 parent_row <- Variable.Metadata[parent_idx[1], ]
                 
+                # Check if this is a "Data Value" variable
+                is_data_value <- FALSE
+                parent_itemdef <- getNodeSet(doc, 
+                    sprintf("//odm:ItemDef[@OID='IT.%s.%s']|//ItemDef[@OID='IT.%s.%s']", 
+                            dataset, varname, dataset, varname),
+                    c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+                if (length(parent_itemdef) > 0) {
+                    desc_node <- getNodeSet(parent_itemdef[[1]], 
+                        ".//odm:TranslatedText|.//TranslatedText",
+                        c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+                    if (length(desc_node) > 0 && xmlValue(desc_node[[1]]) == "Data Value") {
+                        is_data_value <- TRUE
+                    }
+                }
+                
                 itemRefs <- xmlChildren(vld)
                 for (itemRef in itemRefs) {
-                    whereClauseRef <- getNodeSet(itemRef, ".//def:WhereClauseRef", 
-                                               c(def = "http://www.cdisc.org/ns/def/v2.0"))
-                    
-                    if (length(whereClauseRef) > 0) {
-                        whereClauseOID <- xmlGetAttr(whereClauseRef[[1]], "WhereClauseOID")
-                        condition_idx <- which(where_map[, "oid"] == whereClauseOID)
+                    if (xmlName(itemRef) == "ItemRef") {  # Only process ItemRef nodes
+                        whereClauseRef <- getNodeSet(itemRef, ".//def:WhereClauseRef", 
+                                                   c(def = "http://www.cdisc.org/ns/def/v2.0"))
                         
-                        if (length(condition_idx) > 0) {
+                        if (length(whereClauseRef) > 0) {
+                            whereClauseOID <- xmlGetAttr(whereClauseRef[[1]], "WhereClauseOID")
+                            condition_idx <- which(where_map[, "oid"] == whereClauseOID)
+                            
                             new_row <- parent_row
-                            new_row$Where_Condition <- where_map[condition_idx, "condition"]
+                            if (length(condition_idx) > 0) {
+                                new_row$Where_Condition <- where_map[condition_idx, "condition"]
+                            }
                             
                             itemdef_oid <- xmlGetAttr(itemRef, "ItemOID")
+                            method_oid <- xmlGetAttr(itemRef, "MethodOID")
                             
+                            # Get ItemDef metadata
                             itemdef_nodes <- getNodeSet(doc, 
                                 sprintf("//odm:ItemDef[@OID='%s']|//ItemDef[@OID='%s']", 
                                         itemdef_oid, itemdef_oid),
-                                c(odm = "http://www.cdisc.org/ns/odm/v1.3",
-                                  def = "http://www.cdisc.org/ns/def/v2.0"))
+                                c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
                             
                             if (length(itemdef_nodes) > 0) {
-                                origin_nodes <- getNodeSet(itemdef_nodes[[1]], 
+                                itemdef_node <- itemdef_nodes[[1]]
+                                
+                                # Update mandatory flag from ItemRef
+                                mandatory <- xmlGetAttr(itemRef, "Mandatory")
+                                if (!is.null(mandatory)) {
+                                    new_row$IR_Mandatory <- mandatory
+                                }
+                                
+                                # Get origin information
+                                origin_nodes <- getNodeSet(itemdef_node, 
                                                          ".//def:Origin",
                                                          c(def = "http://www.cdisc.org/ns/def/v2.0"))
                                 
@@ -217,7 +278,7 @@ getVarMD <- function(filepath) {
                                     new_row$ID_OriginType <- origin_type
                                     
                                     if (origin_type == "Assigned") {
-                                        comment_oid <- xmlGetAttr(itemdef_nodes[[1]], "def:CommentOID")
+                                        comment_oid <- xmlGetAttr(itemdef_node, "def:CommentOID")
                                         if (!is.null(comment_oid)) {
                                             desc <- comment_map$Description[comment_map$CommentOID == comment_oid]
                                             if (length(desc) > 0 && !is.na(desc[1])) {
@@ -225,12 +286,24 @@ getVarMD <- function(filepath) {
                                             }
                                         }
                                     } else if (origin_type == "Derived") {
-                                        method_oid <- xmlGetAttr(itemRef, "MethodOID")
                                         if (!is.null(method_oid)) {
                                             desc <- method_map$Description[method_map$MethodOID == method_oid]
                                             if (length(desc) > 0 && !is.na(desc[1])) {
                                                 new_row$ID_OriginDescription <- desc[1]
                                             }
+                                        }
+                                    }
+                                }
+                                
+                                # If this is a "Data Value" variable, get controlled terms
+                                if (is_data_value) {
+                                    codeListRef <- getNodeSet(itemdef_node, 
+                                        ".//odm:CodeListRef|.//CodeListRef",
+                                        c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+                                    if (length(codeListRef) > 0) {
+                                        codeListOID <- xmlGetAttr(codeListRef[[1]], "CodeListOID")
+                                        if (!is.null(codeListOID) && codeListOID %in% names(codeList_map)) {
+                                            new_row$Controlled_Terms <- codeList_map[[codeListOID]]
                                         }
                                     }
                                 }
@@ -242,7 +315,8 @@ getVarMD <- function(filepath) {
                 }
             }
         }
-    }    
+    }
+    
     # Add Where_Condition column to original Variable.Metadata
     Variable.Metadata$Where_Condition <- NA
     
