@@ -1,15 +1,9 @@
-getVarMD <- function(filepath) {
-    doc <- xmlTreeParse(filepath, useInternalNodes = T)
-    namespaces <- namespaces(doc)
-
-    # ItemRef
-    ItemGroupDef <- getNodeSet(doc, "//ns:ItemGroupDef", namespaces)
-    DSName <- getDSName(ItemGroupDef)
-
-    # Cache CodeLists for faster lookup
+# Helper function to process CodeLists
+processCodeLists <- function(doc) {
     codeLists <- getNodeSet(doc, "//odm:CodeList|//CodeList", 
                            c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
     codeList_map <- list()
+    
     for (codeList in codeLists) {
         oid <- xmlGetAttr(codeList, "OID")
         name <- xmlGetAttr(codeList, "Name")
@@ -36,12 +30,19 @@ getVarMD <- function(filepath) {
                                      name,
                                      paste(terms, collapse = "\n"))
     }
+    
+    return(list(codeList_map = codeList_map, codeLists = codeLists))
+}
 
+# Helper function to process ItemRefs
+processItemRefs <- function(doc, DSName) {
+    ItemRef <- NULL
+    
     for (i in DSName) {
         ItemRefNode <- getNodeSet(
             doc,
             paste("//ns:ItemGroupDef[@Name ='", i, "']//ns:ItemRef", sep = ""),
-            namespaces
+            namespaces(doc)
         )
 
         IR_ItemOID <- getAttr(
@@ -73,13 +74,85 @@ getVarMD <- function(filepath) {
             stringsAsFactors = FALSE
         )
 
-        if (is.na(match("ItemRef", ls()))) {
+        if (is.null(ItemRef)) {
             ItemRef <- tmpdf
         } else {
             ItemRef <- merge(ItemRef, tmpdf, all = T)
         }
     }
-    # get ItemRef end
+    
+    return(ItemRef)
+}
+
+# Helper function to process method and comment definitions
+processDefinitions <- function(doc) {
+    # Process MethodDefs
+    methodDefs <- getNodeSet(doc, "//odm:MethodDef|//MethodDef", 
+                           c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+    if (length(methodDefs) > 0) {
+        method_map <- do.call(rbind, lapply(methodDefs, function(node) {
+            oid <- xmlGetAttr(node, "OID")
+            translated_text <- getNodeSet(node, ".//odm:TranslatedText|.//TranslatedText",
+                                       c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+            desc <- if (length(translated_text) > 0) {
+                trimws(xmlValue(translated_text[[1]]))
+            } else {
+                NA_character_
+            }
+            data.frame(
+                MethodOID = oid,
+                Description = desc,
+                stringsAsFactors = FALSE
+            )
+        }))
+    } else {
+        method_map <- data.frame(
+            MethodOID = character(0),
+            Description = character(0),
+            stringsAsFactors = FALSE
+        )
+    }
+
+    # Process CommentDefs
+    commentDefs <- getNodeSet(doc, "//def:CommentDef", 
+                            c(def = "http://www.cdisc.org/ns/def/v2.0"))
+    comment_map <- do.call(rbind, lapply(commentDefs, function(node) {
+        oid <- xmlGetAttr(node, "OID")
+        translated_text <- getNodeSet(node, ".//odm:TranslatedText|.//TranslatedText",
+                                   c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
+        desc <- if (length(translated_text) > 0) {
+            trimws(xmlValue(translated_text[[1]]))
+        } else {
+            NA_character_
+        }
+        data.frame(
+            CommentOID = oid,
+            Description = desc,
+            stringsAsFactors = FALSE
+        )
+    }))
+    
+    return(list(method_map = method_map, comment_map = comment_map))
+}
+
+getVarMD <- function(filepath) {
+    doc <- xmlTreeParse(filepath, useInternalNodes = T)
+    
+    # Get dataset names
+    ItemGroupDef <- getNodeSet(doc, "//ns:ItemGroupDef", namespaces(doc))
+    DSName <- getDSName(ItemGroupDef)
+    
+    # Process different parts of the define.xml
+    codeList_results <- processCodeLists(doc)
+    codeList_map <- codeList_results$codeList_map
+    codeLists <- codeList_results$codeLists
+    
+    ItemRef <- processItemRefs(doc, DSName)
+    definitions <- processDefinitions(doc)
+    method_map <- definitions$method_map
+    comment_map <- definitions$comment_map
+    
+    # ItemRef end
 
     item_def <- getItemDef(doc)
     Variable.Metadata <-
