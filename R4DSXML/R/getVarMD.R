@@ -148,28 +148,23 @@ getVarMD <- function(filepath) {
     codeLists <- codeList_results$codeLists
     
     ItemRef <- processItemRefs(doc, DSName)
+    
     definitions <- processDefinitions(doc)
     method_map <- definitions$method_map
     comment_map <- definitions$comment_map
     
-    # ItemRef end
-
     item_def <- getItemDef(doc)
-    Variable.Metadata <-
-        merge(ItemRef, item_def, by.x = "IR_ItemOID", by.y = "ID_OID")
-    so <- order(
-        Variable.Metadata$IGD_Name,
-        Variable.Metadata$IR_OrderNumber
-    )
-
+    Variable.Metadata <- merge(ItemRef, item_def, by.x = "IR_ItemOID", by.y = "ID_OID")
+    
+    # After initial sorting
+    so <- order(Variable.Metadata$IGD_Name, Variable.Metadata$IR_OrderNumber)
     Variable.Metadata <- Variable.Metadata[so, ]
-    row.names(Variable.Metadata) <- NULL
-
+    
     # Create Controlled_Terms column
     Variable.Metadata$Controlled_Terms <- NA_character_
     Variable.Metadata$Display_Value <- NA_character_
     Variable.Metadata$Permitted_Value <- NA_character_  # Add Permitted_Value column
-
+    
     # Cache method and comment definitions
     methodDefs <- getNodeSet(doc, "//odm:MethodDef|//MethodDef", 
                            c(odm = "http://www.cdisc.org/ns/odm/v1.3"))
@@ -519,12 +514,12 @@ getVarMD <- function(filepath) {
             row[names(Variable.Metadata)]
         }))
         
-        # Find QLABEL rows for each dataset
-        datasets <- unique(final_df$IGD_Name)
-        new_variable_metadata <- list()
+        # Create a copy of the original Variable.Metadata
+        new_variable_metadata <- Variable.Metadata
         
-        # Process each dataset separately
-        for (dataset in datasets) {
+        # Process only SUPP domains for QNAM/QLABEL updates
+        supp_datasets <- unique(final_df$IGD_Name)
+        for (dataset in supp_datasets) {
             # Get rows for this dataset
             dataset_rows <- Variable.Metadata[Variable.Metadata$IGD_Name == dataset, ]
             dataset_final_rows <- final_df[final_df$IGD_Name == dataset, ]
@@ -538,14 +533,21 @@ getVarMD <- function(filepath) {
                 after_qlabel <- dataset_rows[seq(qlab_idx + 1, nrow(dataset_rows)), ]
                 
                 # Combine parts with final rows in the middle
-                dataset_rows <- rbind(before_qlabel, dataset_final_rows, after_qlabel)
+                updated_rows <- rbind(before_qlabel, dataset_final_rows, after_qlabel)
+                
+                # Update the rows for this SUPP domain in new_variable_metadata
+                new_variable_metadata <- new_variable_metadata[new_variable_metadata$IGD_Name != dataset, ]
+                new_variable_metadata <- rbind(new_variable_metadata, updated_rows)
             }
-            
-            new_variable_metadata[[dataset]] <- dataset_rows
         }
         
-        # Combine all datasets back together
-        Variable.Metadata <- do.call(rbind, new_variable_metadata)
+        # Update Variable.Metadata with all domains
+        Variable.Metadata <- new_variable_metadata
+        
+        # Sort the final dataset
+        so <- order(Variable.Metadata$IGD_Name, Variable.Metadata$IR_OrderNumber)
+        Variable.Metadata <- Variable.Metadata[so, ]
+        
         # Reset row names to be sequential
         rownames(Variable.Metadata) <- NULL
     }
