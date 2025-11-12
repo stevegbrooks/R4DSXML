@@ -58,6 +58,7 @@ processItemRefs <- function(doc, DSName) {
             IR_OrderNumber = as.integer(sapply(attrs, `[`, "OrderNumber")),
             IR_Mandatory = sapply(attrs, `[`, "Mandatory"),
             IR_KeySequence = as.integer(sapply(attrs, `[`, "KeySequence")),
+            IR_MethodOID = sapply(attrs, `[`, "MethodOID"),
             stringsAsFactors = FALSE
         )
     }
@@ -148,6 +149,29 @@ getVarMD <- function(filepath) {
     
     # Merge data more efficiently
     Variable.Metadata <- merge(ItemRef, item_def, by.x = "IR_ItemOID", by.y = "ID_OID")
+    
+    # Merge method definitions to get derivation descriptions
+    if (nrow(method_map) > 0) {
+        # Only merge rows that have a MethodOID
+        Variable.Metadata <- merge(Variable.Metadata, method_map, 
+                                  by.x = "IR_MethodOID", by.y = "MethodOID", 
+                                  all.x = TRUE)
+        
+        # The merge adds a "Description" column from method_map
+        # Populate ID_OriginDescription with Description when ID_OriginDescription is NA or empty
+        if ("Description" %in% names(Variable.Metadata)) {
+            Variable.Metadata$ID_OriginDescription <- ifelse(
+                (is.na(Variable.Metadata$ID_OriginDescription) | 
+                 Variable.Metadata$ID_OriginDescription == "" |
+                 trimws(Variable.Metadata$ID_OriginDescription) == "") &
+                !is.na(Variable.Metadata$Description),
+                Variable.Metadata$Description,
+                Variable.Metadata$ID_OriginDescription
+            )
+            # Remove the Description column as it's been merged into ID_OriginDescription
+            Variable.Metadata$Description <- NULL
+        }
+    }
     
     # Initial sorting
     Variable.Metadata <- Variable.Metadata[order(Variable.Metadata$IGD_Name, Variable.Metadata$IR_OrderNumber), ]
@@ -251,6 +275,22 @@ getVarMD <- function(filepath) {
                         mandatory <- xmlGetAttr(itemRef, "Mandatory")
                         if (!is.null(mandatory)) {
                             new_row$IR_Mandatory <- mandatory
+                        }
+                        
+                        # Update MethodOID if present
+                        if (!is.null(method_oid)) {
+                            new_row$IR_MethodOID <- method_oid
+                            # Update derivation description from method_map
+                            method_idx <- which(method_map$MethodOID == method_oid)
+                            if (length(method_idx) > 0) {
+                                derivation_desc <- method_map$Description[method_idx[1]]
+                                # Update ID_OriginDescription if it's NA or empty
+                                if (is.na(new_row$ID_OriginDescription) || 
+                                    new_row$ID_OriginDescription == "" ||
+                                    trimws(new_row$ID_OriginDescription) == "") {
+                                    new_row$ID_OriginDescription <- derivation_desc
+                                }
+                            }
                         }
                         
                         if (is_data_value) {
