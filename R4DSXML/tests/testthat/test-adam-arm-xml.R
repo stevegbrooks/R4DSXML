@@ -3,7 +3,7 @@ library(testthat)
 
 
 ## Test metadata preparation
-define <- "/Users/ippei/develop/data/cdisc/ARM-for-Define-XML/adam/define2-0-0-example-adam-results.xml"
+define <- test_path("fixtures", "define-arm-2.0.xml")
 
 #Get analysis displays metadata
 analysis.displays.metadata <- getARDISP(define)

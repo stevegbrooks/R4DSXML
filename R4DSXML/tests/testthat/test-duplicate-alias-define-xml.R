@@ -3,7 +3,7 @@ library(testthat)
 
 
 ## Test metadata preparation 
-define <- "/Users/ippei/develop/data/cdisc/DuplicateAlias/define2-0-0-example-sdtm.xml"
+define <- test_path("fixtures", "define-duplicate-alias.xml")
 
 
 #Get Controlled Terminology

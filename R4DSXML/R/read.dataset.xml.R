@@ -49,11 +49,11 @@ read.dataset.xml <-
         for ( i in c(1:nrow(variable.metadata.type)) ) {
             if ( variable.metadata.type[i, "ID_DataType"] == "integer" ){
               var_ <- variable.metadata.type[i, "ID_Name"]
-              eval( parse( text = paste("df$", var_, " <- ",  "as.integer(df$", var_, ")", sep="")))
+              df[[var_]] <- as.integer(df[[var_]])
             }
             else if ( variable.metadata.type[i, "ID_DataType"] == "float" ){
               var_ <- variable.metadata.type[i, "ID_Name"]
-              eval( parse( text = paste("df$", var_, " <- ",  "as.double(df$", var_, ")", sep="")))
+              df[[var_]] <- as.double(df[[var_]])
             }
         }
     row.names(df) <- NULL

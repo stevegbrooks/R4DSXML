@@ -4,8 +4,8 @@ library(testthat)
 
 
 ## Test data preparation 
-basedir <- "/Users/ippei/develop/data/cdisc/Dataset-XML_1-0/Example/Untyped_Data_Example-sdtm"
-define <- paste0(basedir, "/define2-0-0-example-sdtm(2013-11-09).xml")
+basedir <- test_path("fixtures", "dataset-xml")
+define <- file.path(basedir, "define.xml")
 
 # Read DM file
 sds_dm <- paste0(basedir, "/dm.xml")

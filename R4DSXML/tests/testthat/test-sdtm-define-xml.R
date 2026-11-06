@@ -3,7 +3,7 @@ library(testthat)
 
 
 ## Test metadata preparation 
-define <- "/Users/ippei/develop/data/cdisc/define_xml_2_0_releasepackage20140424/sdtm/define2-0-0-example-sdtm.xml"
+define <- test_path("fixtures", "define-sdtm-2.0.xml")
 
 #Get study metadata
 study.maetadata <- getStudyMD(define)
@@ -34,14 +34,15 @@ test_that("Check Study Metadata", {
 # Check number of records
 test_that("Check number of records", {
     expect_equal(nrow(dataset.metadata), 34)
-    expect_equal(nrow(variable.metadata[variable.metadata$IGD_Name == "LB",]), 28)
+    expect_equal(nrow(subset(variable.metadata, IGD_Name == "LB" & is.na(Where_Condition))), 28)
+    expect_equal(nrow(subset(variable.metadata, IGD_Name == "LB" & !is.na(Where_Condition))), 12)
     expect_equal(nrow(value.metadata[value.metadata$ValueListOID == "VL.QS.QSORRES",]), 28)
 })
 
 # Check number of colums
 test_that("Check number of colums", {
     expect_equal(ncol(dataset.metadata), 12)
-    expect_equal(ncol(variable.metadata), 16)
+    expect_equal(ncol(variable.metadata), 21)
     expect_equal(ncol(value.metadata), 15)
 })
 
@@ -49,6 +50,8 @@ test_that("Check number of colums", {
 test_that("Check exist of specific colums", {
   expect_true( "ID_SASFormatName" %in% names(variable.metadata) )
   expect_false( "ID_DisplayFormat" %in% names(variable.metadata) )
+  expect_true(all(c("IR_MethodOID", "Controlled_Terms", "Display_Value",
+                    "Permitted_Value", "Where_Condition") %in% names(variable.metadata)))
   
   
 })

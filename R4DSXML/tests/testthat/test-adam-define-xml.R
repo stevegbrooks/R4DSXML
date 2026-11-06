@@ -3,7 +3,7 @@ library(testthat)
 
 
 ## Test metadata preparation 
-define <- "/Users/ippei/develop/data/cdisc/define_xml_2_0_releasepackage20140424/adam/define2-0-0-example-adam.xml"
+define <- test_path("fixtures", "define-adam-2.0.xml")
 
 #Get dataset level metadata
 dataset.metadata <- getDLMD(define)
@@ -29,7 +29,7 @@ test_that("Check number of records", {
 # Check number of colums
 test_that("Check number of colums", {
     expect_equal(ncol(dataset.metadata), 12)
-    expect_equal(ncol(variable.metadata), 16)
+    expect_equal(ncol(variable.metadata), 21)
     expect_equal(ncol(value.metadata), 15)
 })
 
@@ -37,6 +37,8 @@ test_that("Check number of colums", {
 test_that("Check exist of specific colums", {
     expect_true( "ID_SASFormatName" %in% names(variable.metadata) )
     expect_false( "ID_DisplayFormat" %in% names(variable.metadata) )
+    expect_true(all(c("IR_MethodOID", "Controlled_Terms", "Display_Value",
+                      "Permitted_Value", "Where_Condition") %in% names(variable.metadata)))
     
     
 })

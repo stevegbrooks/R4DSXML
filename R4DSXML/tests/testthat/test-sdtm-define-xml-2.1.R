@@ -3,7 +3,7 @@ library(testthat)
 
 
 ## Test metadata preparation 
-define <- "/Users/ippei/develop/data/cdisc/DefineV21ReleasePackage/DefineV21/examples/DefineXML-2-1-SDTM/defineV21-SDTM.xml"
+define <- test_path("fixtures", "define-sdtm-2.1.xml")
 
 #Get dataset level metadata
 dataset.metadata <- getDLMD(define)
@@ -30,7 +30,7 @@ test_that("Check number of records", {
 # Check number of colums
 test_that("Check number of colums", {
     expect_equal(ncol(dataset.metadata), 12)
-    expect_equal(ncol(variable.metadata), 16)
+    expect_equal(ncol(variable.metadata), 21)
     expect_equal(ncol(value.metadata), 15)
     expect_equal(ncol(ct.metadata), 13)
 })
@@ -39,6 +39,8 @@ test_that("Check number of colums", {
 test_that("Check exist of specific colums", {
   expect_false( "ID_SASFormatName" %in% names(variable.metadata) )
   expect_true( "ID_DisplayFormat" %in% names(variable.metadata) )
+  expect_true(all(c("IR_MethodOID", "Controlled_Terms", "Display_Value",
+                    "Permitted_Value", "Where_Condition") %in% names(variable.metadata)))
 
 
 })
@@ -58,6 +60,8 @@ test_that("chech an imported value", {
 # Check integer value 
 test_that("chech an imported value", {
   expect_equal(variable.metadata[variable.metadata$IR_ItemOID=="IT.TS.TSSEQ","IR_OrderNumber"], 3 )
+  # This ItemRef also carries the namespaced def:HasNoData attribute.
+  expect_equal(variable.metadata[variable.metadata$IR_ItemOID=="IT.XS.XSORRESU","IR_OrderNumber"], 10)
   expect_equal(value.metadata[value.metadata$IR_ItemOID=="IT.LB.LBORRES.VITB9.LBSPEC.BLOOD","ID_SignificantDigits"], 1)
 })
 

@@ -3,7 +3,7 @@ library(testthat)
 
 
 ## Test metadata preparation 
-define <- "/Users/ippei/develop/data/cdisc/updated_cdiscpilot/UpdatedCDISCPILOT-define.xml"
+define <- test_path("fixtures", "define-blank-descriptions.xml")
 
 
 #Get variable metadata
@@ -14,13 +14,15 @@ val.md <- R4DSXML::getValMD(define)
 
 
 # Check Variable Metadata
-test_that("check a blank description in the variable metadata", {
-    expect_equal(length( var.md[, is.na(var.md$ID_Label)] ), 0)
+test_that("missing and empty variable descriptions retain the metadata rows", {
+    expect_identical(var.md$ID_Label[var.md$IR_ItemOID == "IT.DM.AGE"], NA_character_)
+    expect_identical(var.md$ID_Label[var.md$IR_ItemOID == "IT.DM.SEX"], NA_character_)
 })
 
 # Check Value Level Metadata
-test_that("check a blank description in the value level metadata", {
-    expect_equal(length( val.md[, is.na(val.md$ID_Label)==F] ), 0)
+test_that("missing and empty value descriptions retain the metadata rows", {
+    expect_identical(val.md$ID_Label[val.md$IR_ItemOID == "IT.SC.SCORRES.MARISTAT"], NA_character_)
+    expect_identical(val.md$ID_Label[val.md$IR_ItemOID == "IT.VS.VSORRESU.WEIGHT.DM.COUNTRY.CMETRIC"], NA_character_)
 })
 
 

@@ -1,0 +1,48 @@
+These files make the package tests independent of the original author's
+/Users/ippei directory and of network access during a test run.
+
+The following CDISC examples are copied without content changes from
+https://github.com/cdisc-org/define-xml-2.0-stylesheets
+at commit e94be4ec64c3360e86d756f54533b8f4f94f8a50:
+
+  define-adam-2.0.xml <- test/xml/define.cdisc.adam.xml
+  define-arm-2.0.xml  <- test/xml/define.cdisc.arm.xml
+  define-sdtm-2.0.xml <- test/xml/define.cdisc.sdtm.xml
+
+define-sdtm-2.1.xml is copied without content changes from
+https://github.com/cdisc-org/define-xml-2.1-stylesheets
+at commit e54eb4821ce5dfa34598b95a6bb4c58b3618662b,
+cdisc-2019/examples/DefineXML-2-1-SDTM/defineV21-SDTM.xml.
+LICENSE-CDISC contains the license supplied by the stylesheet repository.
+
+dataset-xml contains the Dataset-XML examples used by the original tests,
+copied without content changes from https://github.com/VinACE/R4CDISC
+at commit 6334665432b035dfddffd5fad18a01f459c0fd4d:
+
+  R4CDISC/inst/extdata/SDTM/dm.xml
+  R4CDISC/inst/extdata/SDTM/ae.xml
+  R4CDISC/inst/extdata/SDTM/lb.xml
+  R4CDISC/inst/extdata/SDTM/tv.xml
+  R4CDISC/inst/extdata/SDTM/define2-0-0-example-sdtm(2013-11-09).xml
+
+The last file is named dataset-xml/define.xml here. R4CDISC declares LGPL-3
+in its DESCRIPTION. These examples contain CDISC demonstration data.
+
+Two regression fixtures are derived from define-sdtm-2.0.xml. Their original
+external copies were unavailable, so their intended cases are explicit:
+
+  define-blank-descriptions.xml removes Description from IT.DM.AGE and
+  IT.SC.SCORRES.MARISTAT. It empties TranslatedText for IT.DM.SEX and
+  IT.VS.VSORRESU.WEIGHT.DM.COUNTRY.CMETRIC. The tests check that these four
+  metadata rows remain present with missing labels.
+
+  define-duplicate-alias.xml inserts an Alias with Context=fixture:OtherCodeID
+  and Name=OTHER-CODE before the existing Alias on CL.MARISTAT and on the
+  Clinical Study Sponsor EnumeratedItem. The tests check the nci:ExtCodeID
+  values rather than the first alias.
+
+The current getVarMD output adds IR_MethodOID, Controlled_Terms, Display_Value,
+Permitted_Value, and Where_Condition to the original 16 columns. The SDTM 2.0
+example contains 28 ordinary LB variable rows and 12 additional condition
+rows. Tests assert these separately instead of treating condition rows as
+additional ordinary variables.
